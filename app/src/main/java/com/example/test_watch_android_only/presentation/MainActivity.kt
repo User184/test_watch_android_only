@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
     // Константы для BLE
     companion object {
         private const val TAG = "BLE" // Тег для логирования
+        private const val MAX_RETRIES = 3 // Максимальное количество попыток отправки
+
 
         // UUID для BLE сервиса и характеристики
         private val SERVICE_UUID = UUID.fromString("00001234-0000-1000-8000-00805f9b34fb")
@@ -419,9 +421,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Отправка сообщения на телефон с повторными попытками
-    */
-    private fun sendMessageToPhone(message: String, maxRetries: Int = 3) {
+     * Отправка сообщения на телефон
+     */
+    private fun sendMessageToPhone(message: String) {
         if (!hasBluetoothPermission()) {
             Log.e(TAG, "Отсутствует разрешение BLUETOOTH_CONNECT")
             return
@@ -430,7 +432,7 @@ class MainActivity : ComponentActivity() {
         var retryCount = 0
         var success = false
 
-        while (!success && retryCount < maxRetries) {
+        while (!success && retryCount < MAX_RETRIES) {
             try {
                 connectedDevice?.let { device ->
                     if (ActivityCompat.checkSelfPermission(
@@ -447,24 +449,45 @@ class MainActivity : ComponentActivity() {
 
                     characteristic?.let {
                         try {
-                            if (ActivityCompat.checkSelfPermission(
-                                    this,
-                                    Manifest.permission.BLUETOOTH_CONNECT
-                                ) == PackageManager.PERMISSION_GRANTED
-                            ) {
-                                // Преобразуем сообщение в байты
-                                val messageBytes = message.toByteArray(Charsets.UTF_8)
-                                // Устанавливаем значение характеристики
-                                characteristic.value = messageBytes
-                                // Отправляем уведомление
-                                success = gattServer.notifyCharacteristicChanged(device, characteristic, false)
-                                if (success) {
-                                    Log.d(TAG, "Сообщение отправлено на телефон (новый API): $message")
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                if (ActivityCompat.checkSelfPermission(
+                                        this,
+                                        Manifest.permission.BLUETOOTH_CONNECT
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    // Преобразуем сообщение в байты
+                                    val messageBytes = message.toByteArray(Charsets.UTF_8)
+                                    // Устанавливаем значение характеристики
+                                    characteristic.value = messageBytes
+                                    // Отправляем уведомление
+                                    success = gattServer.notifyCharacteristicChanged(device, characteristic, false)
+                                    if (success) {
+                                        Log.d(TAG, "Сообщение отправлено на телефон (новый API): $message")
+                                    } else {
+                                        Log.e(TAG, "Не удалось отправить сообщение")
+                                    }
                                 } else {
-                                    Log.e(TAG, "Не удалось отправить сообщение")
+                                    throw SecurityException("Отсутствует разрешение BLUETOOTH_CONNECT")
                                 }
                             } else {
-                                throw SecurityException("Отсутствует разрешение BLUETOOTH_CONNECT")
+                                // Для более старых версий Android
+                                if (ActivityCompat.checkSelfPermission(
+                                        this,
+                                        Manifest.permission.BLUETOOTH_CONNECT
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    @Suppress("DEPRECATION")
+                                    characteristic.value = message.toByteArray(Charsets.UTF_8)
+                                    @Suppress("DEPRECATION")
+                                    success = gattServer.notifyCharacteristicChanged(device, characteristic, false)
+                                    if (success) {
+                                        Log.d(TAG, "Сообщение отправлено на телефон (старый API): $message")
+                                    } else {
+                                        Log.e(TAG, "Не удалось отправить сообщение")
+                                    }
+                                } else {
+                                    throw SecurityException("Отсутствует разрешение BLUETOOTH_CONNECT")
+                                }
                             }
                         } catch (securityException: SecurityException) {
                             Log.e(TAG, "Ошибка прав доступа: ${securityException.message}")
@@ -481,7 +504,7 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         retryCount++
                         Log.e(TAG, "Попытка $retryCount: Ошибка отправки сообщения: ${e.message}")
-                        if (retryCount < maxRetries) {
+                        if (retryCount < MAX_RETRIES) {
                             Thread.sleep(1000) // Пауза перед следующей попыткой
                         }
                     }
@@ -490,9 +513,11 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!success) {
-            Log.e(TAG, "Не удалось отправить сообщение после $maxRetries попыток")
+            Log.e(TAG, "Не удалось отправить сообщение после $MAX_RETRIES попыток")
         }
     }
+
+
 
     /**
      * Проверка наличия разрешения Bluetooth
